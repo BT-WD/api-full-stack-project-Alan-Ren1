@@ -1,11 +1,85 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>API Full Stack Project</title>
-  </head>
-  <body>
-    <!-- You code goes here-->
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Puzzles</title>
+  <link rel="stylesheet" href="index.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <h1>Infinite Puzzles</h1>
+    <span class="puzzle-number" id="puzzle-number">Puzzle #—</span>
+  </header>
+
+  <div class="main-grid">
+
+    <aside class="side-panel">
+      <div class="info-card">
+        <div class="card-label">Puzzle</div>
+        <div class="card-value" id="puzzle-title">Loading…</div>
+      </div>
+      <div class="info-card">
+        <div class="card-label">Date</div>
+        <div class="card-value mono" id="puzzle-id">—</div>
+      </div>
+      <div class="info-card">
+        <div class="card-label">Turn</div>
+        <div class="card-value">
+          <div class="turn-indicator">
+            <div class="turn-dot white" id="turn-dot"></div>
+            <span id="turn-text">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="info-card">
+        <div class="card-label">Moves</div>
+        <div class="move-history" id="move-history"></div>
+      </div>
+    </aside>
+
+    <main class="board-column">
+      <div class="board-wrapper">
+        <div class="coords-file" id="coord-files-top"></div>
+        <div class="board-row">
+          <div class="coords-rank" id="coord-ranks-left"></div>
+          <div id="chess-board"></div>
+          <div class="coords-rank" id="coord-ranks-right"></div>
+        </div>
+        <div class="coords-file" id="coord-files-bottom"></div>
+      </div>
+      <div class="status-bar" id="status-bar">Fetching puzzle…</div>
+      <div class="controls">
+        <button class="btn hint"    id="btn-hint">Hint</button>
+        <button class="btn"         id="btn-undo">Undo</button>
+        <button class="btn primary" id="btn-next">Next →</button>
+      </div>
+    </main>
+
+    <aside class="side-panel">
+      <div class="stat-card">
+        <div class="stat-number" id="stat-completed">0</div>
+        <div class="stat-label">Solved</div>
+      </div>
+      <div class="stat-card streak">
+        <div class="stat-number" id="stat-streak">0</div>
+        <div class="stat-label">🔥 Streak</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="stat-accuracy">—</div>
+        <div class="stat-label">Accuracy</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="stat-attempts">0</div>
+        <div class="stat-label">Attempts</div>
+      </div>
+    </aside>
+
+  </div>
+</div>
+<script src="index.js"></script>
+</body>
 </html>
