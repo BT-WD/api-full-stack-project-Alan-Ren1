@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Infinite Puzzles</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="index.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 </head>
@@ -12,6 +14,7 @@
 
   <header class="header">
     <h1>Infinite Puzzles</h1>
+    <span class="lichess-badge">via Lichess</span>
     <span class="puzzle-number" id="puzzle-number">Puzzle #—</span>
   </header>
 
@@ -21,10 +24,11 @@
       <div class="info-card">
         <div class="card-label">Puzzle</div>
         <div class="card-value" id="puzzle-title">Loading…</div>
+        <div id="puzzle-rating"></div>
       </div>
       <div class="info-card">
-        <div class="card-label">Date</div>
-        <div class="card-value mono" id="puzzle-id">—</div>
+        <div class="card-label">Themes</div>
+        <div class="theme-tags" id="puzzle-themes"><span style="color:var(--text-muted);font-size:11px">—</span></div>
       </div>
       <div class="info-card">
         <div class="card-label">Turn</div>
@@ -38,6 +42,12 @@
       <div class="info-card">
         <div class="card-label">Moves</div>
         <div class="move-history" id="move-history"></div>
+      </div>
+      <div class="info-card" id="lichess-card" style="display:none">
+        <div class="card-label">View on</div>
+        <a class="lichess-link" id="lichess-link" target="_blank" rel="noopener">
+          ♟ Lichess ↗
+        </a>
       </div>
     </aside>
 
@@ -53,8 +63,8 @@
       </div>
       <div class="status-bar" id="status-bar">Fetching puzzle…</div>
       <div class="controls">
-        <button class="btn hint"    id="btn-hint">Hint</button>
-        <button class="btn"         id="btn-undo">Undo</button>
+        <button class="btn"         id="btn-undo">↩ Undo</button>
+        <button class="btn"         id="btn-hint">💡 Hint</button>
         <button class="btn primary" id="btn-next">Next →</button>
       </div>
     </main>

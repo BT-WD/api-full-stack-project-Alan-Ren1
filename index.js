@@ -1,34 +1,38 @@
+/* ═══════════════════════════════════════════════════
+   Infinite Chess Puzzles — Lichess Puzzle API
+   Endpoint: https://lichess.org/api/puzzle/next
+   Returns: { puzzle: { id, rating, themes, solution (UCI) }, game: { pgn, ... } }
+   ═══════════════════════════════════════════════════ */
 
 const FILES = ['a','b','c','d','e','f','g','h'];
-
 const GLYPHS = {
   wK:'♔', wQ:'♕', wR:'♖', wB:'♗', wN:'♘', wP:'♙',
   bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟',
 };
 
-const PROXY = 'https://api.allorigins.win/get?url=';
-const API_URL = 'https://api.chess.com/pub/puzzle/random';
-const STORAGE_KEY = 'infinite_puzzles_stats';
+const STORAGE_KEY = 'infinite_puzzles_v2';
 
-/*
-  The chess.com puzzle API returns a PGN of the FULL game that led to the
-  puzzle position, not just the solution moves. The FEN field is the puzzle
-  start position. To get the solution we replay the full PGN in a temp Chess
-  instance, then replay FROM the puzzle FEN and record every move that was
-  played after that point — those are the solution moves the user must find.
-*/
-
+/* Fallbacks if network unavailable */
 const FALLBACKS = [
-  { title:'Back-Rank Mate', fen:'6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1',   pgn:'1. Rd8#',           solution:['Rd8#'] },
-  { title:'Knight Fork',    fen:'r2qkb1r/ppp2ppp/2n1bn2/3pp3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 7', pgn:'', solution:['Nxe5'] },
-  { title:'Pin Tactic',     fen:'r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4', pgn:'', solution:['Ng5'] },
+  { id:'fb1', title:'Back-Rank Mate', rating:1200, themes:['backRankMate','mateIn1'],
+    fen:'6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1',
+    solution:['d1d8'] },
+  { id:'fb2', title:'Knight Fork', rating:1400, themes:['fork'],
+    fen:'r2qkb1r/ppp2ppp/2n1bn2/3pp3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 7',
+    solution:['f3e5'] },
+  { id:'fb3', title:'Pin Tactic', rating:1300, themes:['pin'],
+    fen:'r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4',
+    solution:['f3g5'] },
 ];
 
 let chess, puzzle, solution, solIdx, selectedSq, lastFrom, lastTo;
-let boardFlipped, hintUsed, wrongThisPuzzle, moveHistory;
+let boardFlipped, wrongThisPuzzle, moveHistory;
+let puzzleDone = false;
+let hintUsed   = false;
 
 let stats = { completed:0, streak:0, attempts:0, correctFirst:0 };
 
+/* ── Stats persistence ── */
 function loadStats() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -51,6 +55,7 @@ function updateStatsDisplay() {
     stats.attempts > 0 ? Math.round(stats.correctFirst / stats.attempts * 100) + '%' : '—';
 }
 
+/* ── UI helpers ── */
 function setStatus(msg, type) {
   const el = document.getElementById('status-bar');
   el.textContent = msg;
@@ -76,80 +81,20 @@ function updateMoveHistory() {
   el.scrollTop = el.scrollHeight;
 }
 
-async function fetchPuzzle() {
-  try {
-    const res  = await fetch(PROXY + encodeURIComponent(API_URL));
-    const data = await res.json();
-    return JSON.parse(data.contents);
-  } catch(e) {
-    return null;
-  }
+/* ── Lichess Puzzle API ──
+   GET https://lichess.org/api/puzzle/next
+   Returns JSON with puzzle.solution as UCI move array and game.pgn for position reconstruction. */
+async function fetchLichessPuzzle() {
+  const r = await fetch('https://lichess.org/api/puzzle/next', {
+    headers: { 'Accept': 'application/json' }
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
 }
 
-/*
-  The chess.com PGN includes the full game history. We need only the moves
-  played AFTER the puzzle FEN. Strategy:
-  1. Strip PGN headers (lines starting with [)
-  2. Strip annotations, comments, result tokens
-  3. Collect all SAN tokens
-  4. Replay them on a fresh default board
-  5. Once the board FEN matches the puzzle FEN, every subsequent token is a solution move
-*/
-function extractSolutionFromPGN(pgn, puzzleFen) {
-  if (!pgn) return [];
-
-  const stripped = pgn
-    .replace(/\[.*?\]\s*/g, '')
-    .replace(/\{[^}]*\}/g, '')
-    .replace(/\([^)]*\)/g, '')
-    .replace(/\$\d+/g, '')
-    .replace(/1-0|0-1|1\/2-1\/2|\*/g, '')
-    .trim();
-
-  const tokens = stripped
-    .replace(/\d+\.\.\./g, '')
-    .replace(/\d+\./g, '')
-    .split(/\s+/)
-    .map(t => t.trim())
-    .filter(t => t.length > 0);
-
-  const puzzleBoard = new Chess(puzzleFen);
-  const puzzleFenNormalized = normalizeFen(puzzleFen);
-
-  const temp = new Chess();
-  let foundStart = false;
-  const solutionMoves = [];
-
-  for (const token of tokens) {
-    if (foundStart) {
-      const result = temp.move(token);
-      if (result) solutionMoves.push(result.san);
-      else break;
-    } else {
-      const fenNow = normalizeFen(temp.fen());
-      if (fenNow === puzzleFenNormalized) {
-        foundStart = true;
-        const result = temp.move(token);
-        if (result) solutionMoves.push(result.san);
-      } else {
-        const result = temp.move(token);
-        if (!result) break;
-        if (normalizeFen(temp.fen()) === puzzleFenNormalized) {
-          foundStart = true;
-        }
-      }
-    }
-  }
-
-  return solutionMoves;
-}
-
-function normalizeFen(fen) {
-  return fen.split(' ').slice(0, 4).join(' ');
-}
-
+/* ── Board rendering ── */
 function getPossibleDests() {
-  if (!selectedSq) return [];
+  if (!selectedSq || puzzleDone) return [];
   return chess.moves({ square: selectedSq, verbose: true }).map(m => m.to);
 }
 
@@ -194,51 +139,44 @@ function renderBoard() {
         span.textContent = GLYPHS[cell.color + cell.type.toUpperCase()] || '?';
         div.appendChild(span);
       }
-
       div.addEventListener('click', () => handleClick(sq));
       el.appendChild(div);
     }
   }
-
   renderCoords();
-  updateTurnIndicator();
+  if (!puzzleDone) updateTurnIndicator();
 }
 
 function renderCoords() {
   const filesArr = boardFlipped ? [...FILES].reverse() : FILES;
   const ranksArr = boardFlipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
-
   ['coord-files-top','coord-files-bottom'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = filesArr.map(f => `<div class="coord-file">${f}</div>`).join('');
   });
-
   ['coord-ranks-left','coord-ranks-right'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = ranksArr.map(r => `<div class="coord-rank">${r}</div>`).join('');
   });
 }
 
+/* ── Click handling ── */
 function handleClick(sq) {
-  if (chess.game_over()) return;
+  if (puzzleDone || chess.game_over()) return;
   const piece = chess.get(sq);
 
   if (selectedSq) {
     if (sq === selectedSq) { selectedSq = null; renderBoard(); return; }
-
     const moves  = chess.moves({ square: selectedSq, verbose: true });
     const target = moves.find(m => m.to === sq);
-
     if (target) {
       if (target.flags.includes('p')) { showPromoDialog(selectedSq, sq); return; }
       doMove(selectedSq, sq);
       return;
     }
-
     if (piece && piece.color === chess.turn()) { selectedSq = sq; renderBoard(); return; }
     selectedSq = null; renderBoard(); return;
   }
-
   if (piece && piece.color === chess.turn()) { selectedSq = sq; renderBoard(); }
 }
 
@@ -246,37 +184,41 @@ function doMove(from, to, promo) {
   promo = promo || 'q';
   const result = chess.move({ from, to, promotion: promo });
   if (!result) return;
-
   selectedSq = null;
   lastFrom   = from;
   lastTo     = to;
   moveHistory.push(result.san);
   updateMoveHistory();
-  checkMove(result);
+  checkMove(result, from, to, promo);
   renderBoard();
 }
 
-function checkMove(result) {
-  if (solution.length === 0) {
+/* ── Core puzzle checker — compares player UCI vs solution UCI ── */
+function checkMove(result, from, to, promo) {
+  if (!solution || solution.length === 0) {
     if      (chess.in_checkmate()) setStatus('Checkmate! ♟', 'correct');
     else if (chess.in_draw())      setStatus('Draw', '');
     else                           setStatus('Move played', '');
     return;
   }
 
-  const expected = solution[solIdx];
-  const correct  = result.san === expected;
+  const expectedUci  = solution[solIdx];
+  const expectedFrom = expectedUci.slice(0, 2);
+  const expectedTo   = expectedUci.slice(2, 4);
+  const expectedPromo = expectedUci.length === 5 ? expectedUci[4] : null;
+  const correct = from === expectedFrom && to === expectedTo &&
+    (!expectedPromo || expectedPromo === (promo || 'q'));
 
   if (correct) {
     solIdx++;
-    stats.attempts++;
-
     if (solIdx >= solution.length) {
+      // Puzzle solved!
+      stats.attempts++;
       if (!wrongThisPuzzle && !hintUsed) { stats.correctFirst++; stats.streak++; }
       else stats.streak = 0;
       stats.completed++;
-      updateStatsDisplay();
-      saveStats();
+      puzzleDone = true;
+      updateStatsDisplay(); saveStats();
       setStatus('Puzzle solved! 🎉', 'correct');
       document.getElementById('turn-dot').className = 'turn-dot white';
       document.getElementById('turn-text').textContent = 'Puzzle complete!';
@@ -285,6 +227,7 @@ function checkMove(result) {
       setTimeout(playOpponentMove, 700);
     }
   } else {
+    // Wrong move
     wrongThisPuzzle = true;
     stats.attempts++;
     stats.streak = 0;
@@ -292,31 +235,53 @@ function checkMove(result) {
     lastFrom = null; lastTo = null;
     moveHistory.pop();
     updateMoveHistory();
-    renderBoard();
-    updateStatsDisplay();
-    saveStats();
+    updateStatsDisplay(); saveStats();
     setStatus('Not the best move — try again', 'wrong');
-    setTimeout(() => setStatus('Find the best move!', 'info'), 1800);
+    renderBoard();
+    setTimeout(() => { if (!puzzleDone) setStatus('Find the best move!', 'info'); }, 1800);
   }
 }
 
 function playOpponentMove() {
-  if (solIdx >= solution.length || chess.game_over()) return;
-  const result = chess.move(solution[solIdx]);
-  if (result) {
-    solIdx++;
-    lastFrom = result.from; lastTo = result.to;
-    moveHistory.push(result.san);
-    updateMoveHistory();
-    renderBoard();
+  if (solIdx >= solution.length || chess.game_over() || puzzleDone) return;
+  const uci = solution[solIdx];
+  const result = chess.move({
+    from: uci.slice(0, 2), to: uci.slice(2, 4),
+    promotion: uci.length === 5 ? uci[4] : 'q'
+  });
+  if (!result) return;
+  solIdx++;
+  lastFrom = result.from; lastTo = result.to;
+  moveHistory.push(result.san);
+  updateMoveHistory();
+  renderBoard();
+  if (solIdx >= solution.length) {
+    puzzleDone = true;
+    stats.completed++;
+    if (!wrongThisPuzzle && !hintUsed) { stats.correctFirst++; stats.streak++; }
+    else stats.streak = 0;
+    updateStatsDisplay(); saveStats();
+    setStatus('Puzzle solved! 🎉', 'correct');
+  } else {
     setStatus('Your turn', 'info');
   }
 }
 
+/* ── Hint: highlight the from-square of the expected move ── */
+function giveHint() {
+  if (puzzleDone || !solution || solution.length === 0) return;
+  hintUsed = true;
+  wrongThisPuzzle = true; // hint counts as imperfect
+  const uci = solution[solIdx];
+  selectedSq = uci.slice(0, 2);
+  renderBoard();
+  setStatus('Hint: move the highlighted piece', 'info');
+}
+
+/* ── Promotion dialog ── */
 function showPromoDialog(from, to) {
   const color  = chess.turn();
   const pieces = ['Q','R','B','N'].map(t => ({ v: t.toLowerCase(), g: GLYPHS[color + t] }));
-
   const overlay = document.createElement('div');
   overlay.className = 'promo-overlay';
   overlay.innerHTML = `
@@ -326,7 +291,6 @@ function showPromoDialog(from, to) {
         ${pieces.map(p => `<button class="promo-btn" data-v="${p.v}">${p.g}</button>`).join('')}
       </div>
     </div>`;
-
   overlay.querySelectorAll('.promo-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.body.removeChild(overlay);
@@ -334,78 +298,115 @@ function showPromoDialog(from, to) {
       doMove(from, to, btn.dataset.v);
     });
   });
-
   document.body.appendChild(overlay);
 }
 
-function showHint() {
-  if (!solution.length || solIdx >= solution.length) {
-    setStatus('No hint available', '');
-    return;
-  }
-  hintUsed = true;
-
-  const nextSAN = solution[solIdx];
-  const temp    = new Chess(chess.fen());
-  const result  = temp.move(nextSAN);
-  if (result) {
-    selectedSq = result.from;
-    renderBoard();
-    setStatus('Hint: move the highlighted piece', 'info');
-  }
-}
-
+/* ── Undo ── */
 function undoMove() {
+  if (puzzleDone) return;
   if (!chess.undo()) return;
   moveHistory.pop();
   if (solIdx > 0) solIdx--;
   selectedSq = null; lastFrom = null; lastTo = null;
-  updateMoveHistory();
-  renderBoard();
-  setStatus('Move undone', '');
+  updateMoveHistory(); renderBoard();
+  setStatus('Move undone — try again', 'info');
 }
 
+/* ── Load next puzzle from Lichess ── */
 async function loadNextPuzzle() {
   selectedSq = null; lastFrom = null; lastTo = null;
-  hintUsed = false; wrongThisPuzzle = false;
-  moveHistory = []; solIdx = 0;
+  wrongThisPuzzle = false; hintUsed = false;
+  puzzleDone = false; moveHistory = []; solIdx = 0;
 
   document.getElementById('move-history').innerHTML = '';
+  document.getElementById('puzzle-themes').innerHTML = '<span style="color:var(--text-muted);font-size:11px">—</span>';
+  document.getElementById('puzzle-rating').innerHTML = '';
+  document.getElementById('lichess-card').style.display = 'none';
+  document.getElementById('btn-next').disabled = true;
+  document.getElementById('btn-undo').disabled = true;
+  document.getElementById('btn-hint').disabled = true;
+
   setStatus('Fetching puzzle…', '');
   document.getElementById('chess-board').innerHTML =
-    '<div class="board-loading">Loading…</div>';
+    '<div class="board-loading"><div class="spinner"></div><span>Loading puzzle…</span></div>';
 
-  const raw = await fetchPuzzle();
+  let fen, sol, puzzleId, rating, themes;
 
-  if (raw && raw.fen && raw.pgn) {
-    puzzle   = raw;
-    solution = extractSolutionFromPGN(raw.pgn, raw.fen);
-  } else if (raw && raw.solution) {
-    puzzle   = raw;
-    solution = raw.solution;
-  } else {
-    const fb = FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
-    puzzle   = fb;
-    solution = fb.solution;
+  try {
+    const data = await fetchLichessPuzzle();
+    /*
+      Lichess API response shape:
+      {
+        puzzle: { id, rating, themes, solution: string[] (UCI), initialPly: number },
+        game:   { pgn: string, ... }
+      }
+      We replay the game PGN to initialPly to get the puzzle starting position.
+    */
+    puzzleId = data.puzzle.id;
+    rating   = data.puzzle.rating;
+    themes   = data.puzzle.themes || [];
+    sol      = data.puzzle.solution; // UCI array
+
+    // Build FEN by replaying game PGN to initialPly
+    const initialPly = data.puzzle.initialPly;
+    const temp = new Chess();
+    temp.load_pgn(data.game.pgn);
+    const history = temp.history({ verbose: true });
+    temp.reset();
+    for (let i = 0; i <= initialPly && i < history.length; i++) {
+      temp.move(history[i]);
+    }
+    fen = temp.fen();
+
+  } catch(e) {
+    console.warn('Lichess API error, using fallback:', e);
+    const fb = FALLBACKS[stats.completed % FALLBACKS.length];
+    puzzleId = fb.id; rating = fb.rating; themes = fb.themes;
+    fen = fb.fen; sol = fb.solution;
   }
 
-  chess        = new Chess(puzzle.fen);
+  chess        = new Chess(fen);
+  solution     = sol;
   boardFlipped = chess.turn() === 'b';
 
   document.getElementById('puzzle-number').textContent = 'Puzzle #' + (stats.completed + 1);
-  document.getElementById('puzzle-title').textContent  = puzzle.title || 'Untitled';
-  document.getElementById('puzzle-id').textContent     =
-    puzzle.publish_time ? new Date(puzzle.publish_time * 1000).toLocaleDateString() : '—';
+  document.getElementById('puzzle-title').textContent  = 'Find the best move';
+
+  // Rating pill
+  if (rating) {
+    document.getElementById('puzzle-rating').innerHTML =
+      `<span class="rating-pill">★ ${rating}</span>`;
+  }
+
+  // Theme tags (max 4, prettified)
+  if (themes.length) {
+    const pretty = t => t.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+    document.getElementById('puzzle-themes').innerHTML =
+      themes.slice(0, 4).map(t => `<span class="theme-tag">${pretty(t)}</span>`).join('');
+  }
+
+  // Lichess link
+  if (puzzleId && !puzzleId.startsWith('fb')) {
+    const card = document.getElementById('lichess-card');
+    const link = document.getElementById('lichess-link');
+    link.href = `https://lichess.org/training/${puzzleId}`;
+    card.style.display = '';
+  }
+
+  document.getElementById('btn-next').disabled = false;
+  document.getElementById('btn-undo').disabled = false;
+  document.getElementById('btn-hint').disabled = false;
 
   renderBoard();
-  setStatus(solution.length ? 'Find the best move!' : 'Explore this position', 'info');
+  setStatus('Find the best move!', 'info');
 }
 
+/* ── Init ── */
 function init() {
   loadStats();
   updateStatsDisplay();
-  document.getElementById('btn-hint').addEventListener('click', showHint);
   document.getElementById('btn-undo').addEventListener('click', undoMove);
+  document.getElementById('btn-hint').addEventListener('click', giveHint);
   document.getElementById('btn-next').addEventListener('click', loadNextPuzzle);
   loadNextPuzzle();
 }
